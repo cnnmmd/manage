@@ -1,0 +1,71 @@
+on:
+  workflow_dispatch:
+    inputs:
+      rep: { type: string }
+      ref: { type: string }
+      nam: { type: string }
+      env: { type: string }
+      ver: { type: string }
+      opt: { type: string }
+permissions:
+  contents: read
+  packages: write
+jobs:
+  addimg:
+    outputs:
+      opt: ${{ steps.setopt.outputs.opt }}
+    strategy:
+      matrix:
+        arc: [amd64, arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - id: setopt
+        run: |
+          opt="${{ inputs.opt }}"
+          if test -n "${opt}"
+          then
+            echo "opt=-${opt}" >> $GITHUB_OUTPUT
+            echo "opt=-${opt}" >> $GITHUB_ENV
+            echo "dir=_option" >> $GITHUB_ENV
+          fi
+      - uses: actions/checkout@v4
+        with:
+          repository: cnnmmd/${{ inputs.rep }}
+          ref: ${{ inputs.ref }}
+          path: target
+      - run: |
+          txtcns='cnsver.txt'
+          pthdoc="target/export${{ env.dir }}${{ env.opt }}/cnf/${{ inputs.nam }}/docenv_${{ inputs.env }}"
+          cd ${pthdoc}
+          test -e ${txtcns} || curl https://raw.githubusercontent.com/litagin02/Style-Bert-VITS2/master/requirements.txt > ${txtcns}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          platforms: linux/${{ matrix.arc }}
+          file: target/export${{ env.dir }}${{ env.opt }}/cnf/${{ inputs.nam }}/docenv_${{ inputs.env }}.txt
+          context: target/export${{ env.dir }}${{ env.opt }}/cnf/${{ inputs.nam }}/docenv_${{ inputs.env }}
+          push: true
+          tags: ghcr.io/cnnmmd/${{ inputs.nam }}/${{ inputs.env }}:${{ inputs.ver }}${{ env.opt }}-${{ matrix.arc }}
+  mrgimg:
+    needs: addimg
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          tagtgt="ghcr.io/cnnmmd/${{ inputs.nam }}/${{ inputs.env }}:${{ inputs.ver }}${{ needs.addimg.outputs.opt }}"
+          tagamd="${tagtgt}-amd64"
+          tagarm="${tagtgt}-arm64"
+          docker buildx imagetools create \
+          ${tagamd} \
+          ${tagarm} \
+          --tag ${tagtgt}
